@@ -1,0 +1,9 @@
+numpy==1.21.*
+scipy==1.7.*
+pyarmor==6.7.4
+cryptography==3.0
+scikit-learn==0.24.*
+Matplotlib==3.4.*
+torch==1.9.*
+torchvision==0.10.*
+tqdm==4.62.*

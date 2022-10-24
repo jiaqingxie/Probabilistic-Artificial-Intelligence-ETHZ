@@ -18,7 +18,7 @@ from util import ece, ParameterDistribution, draw_reliability_diagram, draw_conf
 from enum import Enum
 
 # TODO: Reliability_diagram_1. Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
-EXTENDED_EVALUATION = True
+EXTENDED_EVALUATION = False
 
 class Approach(Enum):
     Dummy_Trainer = 0
@@ -199,8 +199,8 @@ class DummyTrainer(Framework):
 
         # Hyperparameters and general parameters
         self.batch_size = 128
-        self.learning_rate = 1e-3
-        self.num_epochs = 100
+        self.learning_rate = 1e-2
+        self.num_epochs = 200
 
 
         self.network = MNISTNet(in_features=28*28,out_features=10)
@@ -258,9 +258,9 @@ class MNISTNet(nn.Module):
         # TODO General_2: Play around with the network structure.
         # You could change the depth or width of the model
         # I have changed the width from 100 -> 256, 64
-        self.layer1 = nn.Linear(in_features, 256)
-        self.layer2 = nn.Linear(256, 256)
-        self.layer3 = nn.Linear(256, 128)
+        self.layer1 = nn.Linear(in_features, 128)
+        self.layer2 = nn.Linear(128, 128)
+        self.layer3 = nn.Linear(128, 128)
         self.layer4 = nn.Linear(128, out_features)
         self.dropout_p = dropout_p
         self.dropout_at_eval = dropout_at_eval
@@ -316,19 +316,19 @@ class DropoutTrainer(Framework):
 
         # Hyperparameters and general parameters
         # TODO: MC_Dropout_4. Do experiments and tune hyperparameters
-        self.batch_size = 128
-        self.learning_rate = 1e-3
-        self.num_epochs = 200
+        self.batch_size = 256
+        self.learning_rate = 1e-2
+        self.num_epochs = 500
         torch.manual_seed(0) # set seed for reproducibility
         
         # TODO: MC_Dropout_1. Initialize the MC_Dropout network and optimizer here
         # You can check the Dummy Trainer above for intuition about what to do
-        self.network = MNISTNet(in_features=28*28,out_features=10, dropout_p=0.2, dropout_at_eval=True)
+        self.network = MNISTNet(in_features=28*28,out_features=10, dropout_p=0.08, dropout_at_eval=False)
         self.train_loader = torch.utils.data.DataLoader(
             dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
             )
         # As pointed out in the paper, optimizer required a L2 Norm Penalty.
-        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.learning_rate, weight_decay= 2e-5) 
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.learning_rate, weight_decay= 1e-4) 
         
 
     def train(self):

@@ -258,10 +258,9 @@ class MNISTNet(nn.Module):
         # TODO General_2: Play around with the network structure.
         # You could change the depth or width of the model
         # I have changed the width from 100 -> 256, 64
-        self.layer1 = nn.Linear(in_features, 128)
-        self.layer2 = nn.Linear(128, 128)
-        self.layer3 = nn.Linear(128, 128)
-        self.layer4 = nn.Linear(128, out_features)
+        self.layer1 = nn.Linear(in_features, 256)
+        self.layer2 = nn.Linear(256, 84)
+        self.layer3 = nn.Linear(84, out_features)
         self.dropout_p = dropout_p
         self.dropout_at_eval = dropout_at_eval
 
@@ -278,13 +277,7 @@ class MNISTNet(nn.Module):
                 p=self.dropout_p,
                 training=self.training or self.dropout_at_eval
         )
-        x = F.dropout(
-                F.relu(self.layer3(x)),
-                p=self.dropout_p,
-                training=self.training or self.dropout_at_eval
-        )
-
-        class_probs = self.layer4(x)
+        class_probs = self.layer3(x)
         return class_probs
 
 class SelfMadeNetwork(nn.Module):
@@ -317,19 +310,20 @@ class DropoutTrainer(Framework):
         # Hyperparameters and general parameters
         # TODO: MC_Dropout_4. Do experiments and tune hyperparameters
         self.batch_size = 256
-        self.learning_rate = 1e-2
-        self.num_epochs = 500
+        self.learning_rate = 1e-3
+        self.num_epochs = 200
         torch.manual_seed(0) # set seed for reproducibility
         
         # TODO: MC_Dropout_1. Initialize the MC_Dropout network and optimizer here
         # You can check the Dummy Trainer above for intuition about what to do
-        self.network = MNISTNet(in_features=28*28,out_features=10, dropout_p=0.08, dropout_at_eval=False)
+        self.network = MNISTNet(in_features=28*28,out_features=10, dropout_p=0.15, dropout_at_eval=True)
         self.train_loader = torch.utils.data.DataLoader(
             dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
             )
         # As pointed out in the paper, optimizer required a L2 Norm Penalty.
-        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.learning_rate, weight_decay= 1e-4) 
-        
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.learning_rate, weight_decay= 1e-3) 
+        self.criterion = nn.CrossEntropyLoss()
+        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.9)
 
     def train(self):
         self.network.train()
@@ -343,17 +337,19 @@ class DropoutTrainer(Framework):
                 # You need to calculate the loss based on the literature
                 current_logits = self.network(batch_x)
                 # loss keep unchanged 
-                loss = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
+                loss = self.criterion(F.log_softmax(current_logits, dim=1), batch_y)
+                #loss = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
                 # Backpropagate to get the gradients
                 loss.backward()
 
                 self.optimizer.step()
+                
                 # Update progress bar with accuracy occasionally
                 if batch_idx % self.print_interval == 0:
                     current_logits = self.network(batch_x)
                     current_accuracy = (current_logits.argmax(axis=1) == batch_y).float().mean()
                     progress_bar.set_postfix(loss=loss.item(), acc=current_accuracy.item())
-          
+            self.lr_scheduler.step()
 
     def predict_probabilities(self, x: torch.Tensor, num_sample=100) -> torch.Tensor:
         # TODO: MC_Dropout_3. Implement your MC_dropout prediction here
@@ -371,8 +367,6 @@ class DropoutTrainer(Framework):
                 y_preds = torch.cat((y_preds, prob.unsqueeze(0)), dim = 0) 
 
         estimated_probability = torch.mean(y_preds, axis = 0)
-        
-        #print(estimated_probability)
         assert estimated_probability.shape == (x.shape[0], 10)  
         return estimated_probability
 

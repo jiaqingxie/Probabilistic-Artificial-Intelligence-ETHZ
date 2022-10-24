@@ -18,7 +18,7 @@ from util import ece, ParameterDistribution, draw_reliability_diagram, draw_conf
 from enum import Enum
 
 # TODO: Reliability_diagram_1. Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
-EXTENDED_EVALUATION = False
+EXTENDED_EVALUATION = True
 
 class Approach(Enum):
     Dummy_Trainer = 0
@@ -47,7 +47,7 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
     if not combined_model:
         
         # TODO General_1: Choose your approach here
-        approach = Approach.Dummy_Trainer
+        approach = Approach.MCDropout
 
         if approach == Approach.Dummy_Trainer:
             trainer = DummyTrainer(dataset_train=dataset_train)
@@ -119,6 +119,7 @@ def calc_calibration_curve(predicted_probabilities: np.ndarray, labels: np.ndarr
 
     for bin_i, (bin_lower, bin_upper) in enumerate(zip(bin_lowers, bin_uppers)):
         # TODO: Reliability_diagram_2. Calculate calibration confidence, accuracy in every bin
+
         calib_confidence[bin_i] = None
         calib_accuracy[bin_i] = None
         ratios[bin_i] = None
@@ -256,9 +257,11 @@ class MNISTNet(nn.Module):
         super().__init__()
         # TODO General_2: Play around with the network structure.
         # You could change the depth or width of the model
-        self.layer1 = nn.Linear(in_features,100)
-        self.layer2 = nn.Linear(100, 100)
-        self.layer3 = nn.Linear(100, out_features)
+        # I have changed the width from 100 -> 256, 64
+        self.layer1 = nn.Linear(in_features, 256)
+        self.layer2 = nn.Linear(256, 256)
+        self.layer3 = nn.Linear(256, 128)
+        self.layer4 = nn.Linear(128, out_features)
         self.dropout_p = dropout_p
         self.dropout_at_eval = dropout_at_eval
 
@@ -275,8 +278,13 @@ class MNISTNet(nn.Module):
                 p=self.dropout_p,
                 training=self.training or self.dropout_at_eval
         )
+        x = F.dropout(
+                F.relu(self.layer3(x)),
+                p=self.dropout_p,
+                training=self.training or self.dropout_at_eval
+        )
 
-        class_probs = self.layer3(x)
+        class_probs = self.layer4(x)
         return class_probs
 
 class SelfMadeNetwork(nn.Module):
@@ -287,6 +295,10 @@ class SelfMadeNetwork(nn.Module):
         super().__init__()
         # TODO General_3: Play around with the network structure.
         # You can customize your own model here. 
+
+
+        # 1. GoogleNet
+        # 2. ResNet
         self.layer1 = None
         self.layer2 = None
         self.layer3 = None
@@ -306,13 +318,17 @@ class DropoutTrainer(Framework):
         # TODO: MC_Dropout_4. Do experiments and tune hyperparameters
         self.batch_size = 128
         self.learning_rate = 1e-3
-        self.num_epochs = 100
-        # torch.manual_seed(0) # set seed for reproducibility
+        self.num_epochs = 200
+        torch.manual_seed(0) # set seed for reproducibility
         
         # TODO: MC_Dropout_1. Initialize the MC_Dropout network and optimizer here
         # You can check the Dummy Trainer above for intuition about what to do
-        self.network = None
-        self.optimizer = None
+        self.network = MNISTNet(in_features=28*28,out_features=10, dropout_p=0.2, dropout_at_eval=True)
+        self.train_loader = torch.utils.data.DataLoader(
+            dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
+            )
+        # As pointed out in the paper, optimizer required a L2 Norm Penalty.
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.learning_rate, weight_decay= 2e-5) 
         
 
     def train(self):
@@ -325,8 +341,9 @@ class DropoutTrainer(Framework):
                 self.network.zero_grad()
                 # TODO: MC_Dropout_2. Implement MCDropout training here
                 # You need to calculate the loss based on the literature
-                loss = None
-
+                current_logits = self.network(batch_x)
+                # loss keep unchanged 
+                loss = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
                 # Backpropagate to get the gradients
                 loss.backward()
 
@@ -339,14 +356,23 @@ class DropoutTrainer(Framework):
           
 
     def predict_probabilities(self, x: torch.Tensor, num_sample=100) -> torch.Tensor:
-        assert x.shape[1] == 28 ** 2
-        self.network.eval()
-
         # TODO: MC_Dropout_3. Implement your MC_dropout prediction here
         # You need to sample from your trained model here multiple times
         # in order to implement Monte Carlo integration
-        estimated_probability = None
+        assert x.shape[1] == 28 ** 2
+        self.network.eval()
+        y_preds = 0
+        for i in range(num_sample):
+            if i == 0:
+                prob = F.softmax(self.network(x), dim=1)
+                y_preds = prob.unsqueeze(0)
+            else:
+                prob = F.softmax(self.network(x), dim=1)
+                y_preds = torch.cat((y_preds, prob.unsqueeze(0)), dim = 0) 
+
+        estimated_probability = torch.mean(y_preds, axis = 0)
         
+        #print(estimated_probability)
         assert estimated_probability.shape == (x.shape[0], 10)  
         return estimated_probability
 
@@ -365,8 +391,9 @@ class EnsembleTrainer(Framework):
         # TODO: Ensemble_1.  initialize the Ensemble network list and optimizer.
         # You can check the Dummy Trainer above for intution about what to do
         # You need to build an ensemble of initialized networks here
-        self.EnsembleNetworks = [None]
-        self.optimizer = None
+        self.num_ensemble = 50
+        self.EnsembleNetworks = [MNISTNet(784, 10, 0, False) for i in range(self.num_ensemble)]
+        self.optimizer = [torch.optim.Adam(lr=self.learning_rate, weight_decay=3e-5) for i in range(self.num_ensemble)]
 
     def train(self):
 
@@ -704,12 +731,14 @@ class UnivariateGaussian(ParameterDistribution):
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
         # TODO: Backprop_4. You need to complete the log likelihood function 
         # for the Univariate Gaussian distribution. 
-        return 0.0
+        constant = -0.5 * torch.log(2 * np.pi) - torch.log(self.sigma)
+        squared = -0.5 * (((values - self.mu)/self.sigma) ** 2)
+        return constant + squared
 
     def sample(self) -> torch.Tensor:
         # TODO: Backprop_4. You need to complete the sample function 
         # for the Univariate Gaussian distribution. 
-        raise NotImplementedError()
+        return torch.randn(()) * self.sigma + self.mu
 
 
 class MultivariateDiagonalGaussian(ParameterDistribution):
@@ -730,12 +759,17 @@ class MultivariateDiagonalGaussian(ParameterDistribution):
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
         # TODO: Backprop_5. You need to complete the log likelihood function 
         # for the Multivariate DiagonalGaussian Gaussian distribution. 
-        return 0.0
+        sigma = F.softplus(self.rho)
+        constant = - 0.5 * len(values.shape[1]) * torch.log(2 * np.pi)
+        constant = constant - 0.5 * torch.det(sigma)
+        ans = constant - 0.5 * ((values - self.mu).flatten()).T @ torch.linalg.inv(sigma) @ (values - self.mu).flatten()
+        return ans
 
     def sample(self) -> torch.Tensor:
         # TODO: Backprop_5. You need to complete the sample function 
         # for the Multivariate DiagonalGaussian Gaussian distribution. 
-        raise NotImplementedError()
+        sigma = F.softplus(self.rho)
+        return torch.randn(*self.mu.shape) * sigma + self.mu
 
 
 
@@ -798,11 +832,12 @@ def evaluate(model:Framework, eval_loader: torch.utils.data.DataLoader, data_dir
     # You can uncomment the below code to make it run. You can learn from
     # the graph about how to improve your model. Remember first to complete 
     # the function of calc_calibration_curve.
-  
-    # print('Plotting reliability diagram on Test Dataset')
-    # out = calc_calibration_curve(predicted_probabilities, actual_classes, num_bins = 30)
-    # fig = draw_reliability_diagram(out)
-    # fig.savefig(os.path.join(output_dir, 'reliability-diagram.pdf'))
+    
+    print('Plotting reliability diagram on Test Dataset')
+    out = calc_calibration_curve(predicted_probabilities, actual_classes, num_bins = 30)
+    fig = draw_reliability_diagram(out)
+    fig.savefig(os.path.join(output_dir, 'reliability-diagram.pdf'))
+
 
     if EXTENDED_EVALUATION:
         if not os.path.isdir(output_dir):
@@ -942,12 +977,13 @@ def evaluate(model:Framework, eval_loader: torch.utils.data.DataLoader, data_dir
 
 
 def main():
+    '''
     raise RuntimeError(
         'This main method is for illustrative purposes only and will NEVER be called by the checker!\n'
         'The checker always calls run_solution directly.\n'
         'Please implement your solution exclusively in the methods and classes mentioned in the task description.'
     )
-
+    '''
     # Load training data
     data_dir = os.curdir
     output_dir = os.curdir

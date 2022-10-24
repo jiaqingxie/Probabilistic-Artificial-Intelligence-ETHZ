@@ -157,7 +157,7 @@ def draw_reliability_diagram(out,
     
 
     ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)\
+    ax.set_ylim(0, 1)
     
     ax.set_title(title)
     ax.set_xlabel(xlabel)

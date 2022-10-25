@@ -259,8 +259,8 @@ class MNISTNet(nn.Module):
         # TODO General_2: Play around with the network structure.
         # You could change the depth or width of the model
         # I have changed the width from 100 -> 256, 64
-        self.layer1 = nn.Linear(in_features, 256)
-        self.layer2 = nn.Linear(256, 84)
+        self.layer1 = nn.Linear(in_features, 256) # 256 for MC-dropout
+        self.layer2 = nn.Linear(256, 84) # 256 for MC-dropout
         self.layer3 = nn.Linear(84, out_features)
         self.dropout_p = dropout_p
         self.dropout_at_eval = dropout_at_eval
@@ -379,7 +379,7 @@ class EnsembleTrainer(Framework):
 
         # Hyperparameters and general parameters
         # TODO: Ensemble_4. Do experiments and tune hyperparameters
-        self.batch_size = 128
+        self.batch_size = 256
         self.learning_rate = 1e-3
         self.num_epochs = 100
         torch.manual_seed(0)
@@ -389,7 +389,7 @@ class EnsembleTrainer(Framework):
         # TODO: Ensemble_1.  initialize the Ensemble network list and optimizer.
         # You can check the Dummy Trainer above for intution about what to do
         # You need to build an ensemble of initialized networks here
-        self.num_ensemble = 2
+        self.num_ensemble = 5
         self.criterion = nn.CrossEntropyLoss()
         self.EnsembleNetworks = []
         self.optimizer = []
@@ -429,12 +429,20 @@ class EnsembleTrainer(Framework):
         # TODO: Ensemble_3. Implement Ensemble prediction here
         # You need obtain predictions from each ensemble member and think about 
         # how to combine the results from each of them
+
+        counter = 0
+        y_preds = 0
         for network in self.EnsembleNetworks:  
             network.eval() 
-            prob = F.softmax(network(x), dim=1)
-            print(prob.shape)
+            if counter == 0:
+                prob = F.softmax(network(x), dim=1)
+                y_preds = prob.unsqueeze(0)
+            else:
+                prob = F.softmax(network(x), dim=1)
+                y_preds = torch.cat((y_preds, prob.unsqueeze(0)), dim = 0) 
+            counter+=1
 
-        estimated_probability = None
+        estimated_probability = torch.mean(y_preds, axis = 0)
         
         assert estimated_probability.shape == (x.shape[0], 10)  
         return estimated_probability
@@ -457,7 +465,7 @@ class SGLDTrainer(Framework):
 
         # TODO: SGLD_1.  initialize the SGLD network.
         # You can check the Dummy Trainer above for intution about what to do
-        self.network = None
+        self.network = MNISTNet(784, 10, 0, False)
         
         # SGLD optimizer is provided
         self.optimizer = SGLD(self.network.parameters(),lr = self.learning_rate)
@@ -485,8 +493,8 @@ class SGLDTrainer(Framework):
 
                 # Calculate the loss
                 # TODO: SGLD_1. Implement SGLD training here
-                # You need to calculate the loss based on the literature
-                loss = None
+                # You need to calculate the loss based on the literature3
+                loss = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
 
                 # Backpropagate to get the gradients
                 loss.backward()
@@ -501,11 +509,15 @@ class SGLDTrainer(Framework):
             # TODO: SGLD_2. save the model samples if it satisfies the following conditions:
             # We are 1) past the burn-in epochs and 2) reached one of the regular sampling intervals we save the model at
             # If the self.SGLDSequence already exceeded the maximum length then we have to delete the oldest model
-            if None:
-                self.SGLDSequence # add model
-            if None:
-                self.SGLDSequence # remove model
-
+            if num_iter < self.burn_in:
+                continue
+            else:
+                if len(self.SGLDSequence) > self.max_size:
+                    self.SGLDSequence.popleft()
+                else:
+                    if num_iter % self.sample_interval == 0:
+                        self.SGLDSequence.append(self.network)
+        
     def predict_probabilities(self, x: torch.Tensor) -> torch.Tensor:
         assert x.shape[1] == 28 ** 2
         self.network.eval()
@@ -513,7 +525,15 @@ class SGLDTrainer(Framework):
         # TODO SGLD_3: Implement SGLD predictions here
         # You need to obtain the prediction from each network
         # in SGLDSequence and combine the predictions
-        estimated_probability = None
+        for i in range(self.SGLDSequence):
+            if i == 0:
+                prob = F.softmax(self.SGLDSequence[i](x), dim=1)
+                y_preds = prob.unsqueeze(0)
+            else:
+                prob = F.softmax(self.SGLDSequence[i](x), dim=1)
+                y_preds = torch.cat((y_preds, prob.unsqueeze(0)), dim = 0) 
+
+        estimated_probability = torch.mean(y_preds, axis = 0)
         
         assert estimated_probability.shape == (x.shape[0], 10)  
         return estimated_probability
@@ -776,7 +796,6 @@ class MultivariateDiagonalGaussian(ParameterDistribution):
         # for the Multivariate DiagonalGaussian Gaussian distribution. 
         sigma = F.softplus(self.rho)
         return torch.randn(*self.mu.shape) * sigma + self.mu
-
 
 
 class SelfTrainer(Framework):

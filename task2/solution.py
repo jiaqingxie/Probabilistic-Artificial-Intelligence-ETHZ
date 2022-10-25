@@ -47,7 +47,8 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
     if not combined_model:
         
         # TODO General_1: Choose your approach here
-        approach = Approach.MCDropout
+        #approach = Approach.MCDropout
+        approach = Approach.Ensemble
 
         if approach == Approach.Dummy_Trainer:
             trainer = DummyTrainer(dataset_train=dataset_train)
@@ -381,47 +382,58 @@ class EnsembleTrainer(Framework):
         self.batch_size = 128
         self.learning_rate = 1e-3
         self.num_epochs = 100
-
+        torch.manual_seed(0)
+        self.train_loader = torch.utils.data.DataLoader(
+            dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
+            )
         # TODO: Ensemble_1.  initialize the Ensemble network list and optimizer.
         # You can check the Dummy Trainer above for intution about what to do
         # You need to build an ensemble of initialized networks here
-        self.num_ensemble = 50
-        self.EnsembleNetworks = [MNISTNet(784, 10, 0, False) for i in range(self.num_ensemble)]
-        self.optimizer = [torch.optim.Adam(lr=self.learning_rate, weight_decay=1e-3) for i in range(self.num_ensemble)]
+        self.num_ensemble = 2
+        self.criterion = nn.CrossEntropyLoss()
+        self.EnsembleNetworks = []
+        self.optimizer = []
+        self.lr_scheduler = []
+        for i in range(self.num_ensemble):
+            self.EnsembleNetworks.append(MNISTNet(784, 10, 0, False))
+            self.optimizer.append(torch.optim.Adam(self.EnsembleNetworks[i].parameters(), lr=self.learning_rate, weight_decay=1e-3))
+            self.lr_scheduler.append(torch.optim.lr_scheduler.StepLR(self.optimizer[i], step_size=5, gamma=0.9))
 
     def train(self):
-
+        counter = 0
         for network in self.EnsembleNetworks:   
             network.train()
             progress_bar = trange(self.num_epochs)
             for _ in progress_bar:
                 for batch_idx, (batch_x, batch_y) in enumerate(self.train_loader):
                     # batch_x are of shape (batch_size, 784), batch_y are of shape (batch_size,)
-
                     network.zero_grad()
                     # TODO: Ensemble_2. Implement Ensemble training here
                     # You need to calculate the loss based on the literature
-                    loss = None
-
+                    current_logits = network(batch_x)
+                    loss = self.criterion(F.log_softmax(current_logits, dim=1), batch_y)
                     # Backpropagate to get the gradients
                     loss.backward()
-
-                    self.optimizer.step()
-
+                    self.optimizer[counter].step()
                     # Update progress bar with accuracy occasionally
                     if batch_idx % self.print_interval == 0:
-                        current_logits = self.network(batch_x)
+                        current_logits = network(batch_x)
                         current_accuracy = (current_logits.argmax(axis=1) == batch_y).float().mean()
                         progress_bar.set_postfix(loss=loss.item(), acc=current_accuracy.item())
 
+                self.lr_scheduler[counter].step()
+            counter+=1
+
     def predict_probabilities(self, x: torch.Tensor) -> torch.Tensor:
         assert x.shape[1] == 28 ** 2
-        for network in self.EnsembleNetworks:  
-            network.eval() 
-
         # TODO: Ensemble_3. Implement Ensemble prediction here
         # You need obtain predictions from each ensemble member and think about 
         # how to combine the results from each of them
+        for network in self.EnsembleNetworks:  
+            network.eval() 
+            prob = F.softmax(network(x), dim=1)
+            print(prob.shape)
+
         estimated_probability = None
         
         assert estimated_probability.shape == (x.shape[0], 10)  

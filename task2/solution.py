@@ -387,7 +387,7 @@ class EnsembleTrainer(Framework):
         # You need to build an ensemble of initialized networks here
         self.num_ensemble = 50
         self.EnsembleNetworks = [MNISTNet(784, 10, 0, False) for i in range(self.num_ensemble)]
-        self.optimizer = [torch.optim.Adam(lr=self.learning_rate, weight_decay=3e-5) for i in range(self.num_ensemble)]
+        self.optimizer = [torch.optim.Adam(lr=self.learning_rate, weight_decay=1e-3) for i in range(self.num_ensemble)]
 
     def train(self):
 

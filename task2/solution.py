@@ -48,7 +48,7 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
         
         # TODO General_1: Choose your approach here
         #approach = Approach.MCDropout
-        approach = Approach.Ensemble
+        approach = Approach.SGLD
 
         if approach == Approach.Dummy_Trainer:
             trainer = DummyTrainer(dataset_train=dataset_train)
@@ -455,21 +455,23 @@ class SGLDTrainer(Framework):
 
         # Hyperparameters and general parameters
         # TODO: SGLD_4. Do experiments and tune hyperparameters
-        self.batch_size = 128
-        self.learning_rate = 1e-3
+        self.batch_size = 1024
+        self.learning_rate = 2e-4
         self.num_epochs = 100
         self.burn_in = 2
         self.sample_interval = 3
         self.max_size = 10
-
-
+        torch.manual_seed(0)
         # TODO: SGLD_1.  initialize the SGLD network.
         # You can check the Dummy Trainer above for intution about what to do
-        self.network = MNISTNet(784, 10, 0, False)
-        
+        self.network = MNISTNet(784, 10, 0.3, True)
+        self.train_loader = torch.utils.data.DataLoader(
+            dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
+            )
         # SGLD optimizer is provided
-        self.optimizer = SGLD(self.network.parameters(),lr = self.learning_rate)
-
+        self.optimizer = SGLD(self.network.parameters(),lr = self.learning_rate, weight_decay=6.5e-5, momentum=0.5,
+                        nesterov = True)
+        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=3, gamma=0.68)
         # deques support bi-directional addition and deletion
         # You can add models in the right side of a deque by append()
         # You can delete models in the left side of a deque by popleft()
@@ -495,10 +497,9 @@ class SGLDTrainer(Framework):
                 # TODO: SGLD_1. Implement SGLD training here
                 # You need to calculate the loss based on the literature3
                 loss = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
-
+                #loss = self.criterion(F.log_softmax(current_logits, dim=1), batch_y)
                 # Backpropagate to get the gradients
                 loss.backward()
-
                 self.optimizer.step()
 
                 if batch_idx % self.print_interval == 0:
@@ -506,26 +507,37 @@ class SGLDTrainer(Framework):
                     current_accuracy = (current_logits.argmax(axis=1) == batch_y).float().mean()
                     progress_bar.set_postfix(loss=loss.item(), acc=current_accuracy.item())
   
+            
             # TODO: SGLD_2. save the model samples if it satisfies the following conditions:
             # We are 1) past the burn-in epochs and 2) reached one of the regular sampling intervals we save the model at
             # If the self.SGLDSequence already exceeded the maximum length then we have to delete the oldest model
             if num_iter < self.burn_in:
                 continue
             else:
-                if len(self.SGLDSequence) > self.max_size:
-                    self.SGLDSequence.popleft()
+                if len(self.SGLDSequence) >= self.max_size:
+                    if num_iter % self.sample_interval == 0:
+                        self.SGLDSequence.popleft()
+                        self.SGLDSequence.append(self.network)
+                    else:
+                        continue
                 else:
                     if num_iter % self.sample_interval == 0:
                         self.SGLDSequence.append(self.network)
+                    else:
+                        continue
+            
+            self.lr_scheduler.step()
         
     def predict_probabilities(self, x: torch.Tensor) -> torch.Tensor:
         assert x.shape[1] == 28 ** 2
-        self.network.eval()
+        
 
         # TODO SGLD_3: Implement SGLD predictions here
         # You need to obtain the prediction from each network
         # in SGLDSequence and combine the predictions
-        for i in range(self.SGLDSequence):
+
+        for i in range(len(self.SGLDSequence)):
+            self.SGLDSequence[i].eval()
             if i == 0:
                 prob = F.softmax(self.SGLDSequence[i](x), dim=1)
                 y_preds = prob.unsqueeze(0)

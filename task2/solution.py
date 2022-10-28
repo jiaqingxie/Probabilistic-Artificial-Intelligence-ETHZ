@@ -47,8 +47,8 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
     if not combined_model:
         
         # TODO General_1: Choose your approach here
-        #approach = Approach.MCDropout
-        approach = Approach.SGLD
+        approach = Approach.MCDropout
+        #approach = Approach.SGLD
 
         if approach == Approach.Dummy_Trainer:
             trainer = DummyTrainer(dataset_train=dataset_train)
@@ -247,7 +247,6 @@ class DummyTrainer(Framework):
         assert estimated_probability.shape == (x.shape[0], 10)
         return estimated_probability
 
-
 class MNISTNet(nn.Module):
     def __init__(self,
                 in_features: int, 
@@ -285,22 +284,40 @@ class SelfMadeNetwork(nn.Module):
     def __init__(self,
                 in_features: int, 
                 out_features: int,
+                dropout_p=0,
+                dropout_at_eval=False
                 ):
         super().__init__()
-        # TODO General_3: Play around with the network structure.
-        # You can customize your own model here. 
-
-
-        # 1. GoogleNet
-        # 2. ResNet
-        self.layer1 = None
-        self.layer2 = None
-        self.layer3 = None
+        # TODO General_2: Play around with the network structure.
+        # You could change the depth or width of the model
+        # I have changed the width from 100 -> 256, 64
+        self.layer1 = nn.Linear(in_features, 256) # 256 for MC-dropout
+        self.layer2 = nn.Linear(256, 128) # 256 for MC-dropout
+        self.layer3 = nn.Linear(128, 84) 
+        self.layer4 = nn.Linear(84, out_features)
+        self.dropout_p = dropout_p
+        self.dropout_at_eval = dropout_at_eval
 
     def forward(self, x):
-        x = self.layer1(x)
-        x = self.layer2(x)
-        class_probs = self.layer3(x)
+        # TODO General_2: Play around with the network structure
+        # You might add different modules like Pooling 
+        x = F.dropout(
+                F.relu(self.layer1(x)),
+                p=self.dropout_p,
+                training=self.training or self.dropout_at_eval
+        )
+        x = F.dropout(
+                F.relu(self.layer2(x)),
+                p=self.dropout_p,
+                training=self.training or self.dropout_at_eval
+        )
+
+        x = F.dropout(
+                F.relu(self.layer3(x)),
+                p=self.dropout_p,
+                training=self.training or self.dropout_at_eval
+        )
+        class_probs = self.layer4(x)
         return class_probs
 
 class DropoutTrainer(Framework):
@@ -313,10 +330,11 @@ class DropoutTrainer(Framework):
         self.batch_size = 256
         self.learning_rate = 1e-3
         self.num_epochs = 200
-        torch.manual_seed(0) # set seed for reproducibility
+        torch.manual_seed(14504) # set seed for reproducibility
         
         # TODO: MC_Dropout_1. Initialize the MC_Dropout network and optimizer here
         # You can check the Dummy Trainer above for intuition about what to do
+        #self.network = SelfMadeNetwork(in_features=28*28,out_features=10, dropout_p=0.18, dropout_at_eval=True)
         self.network = MNISTNet(in_features=28*28,out_features=10, dropout_p=0.15, dropout_at_eval=True)
         self.train_loader = torch.utils.data.DataLoader(
             dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
@@ -324,7 +342,7 @@ class DropoutTrainer(Framework):
         # As pointed out in the paper, optimizer required a L2 Norm Penalty.
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.learning_rate, weight_decay= 1e-3) 
         self.criterion = nn.CrossEntropyLoss()
-        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.9)
+        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=4, gamma=0.9)
 
     def train(self):
         self.network.train()
@@ -352,7 +370,7 @@ class DropoutTrainer(Framework):
                     progress_bar.set_postfix(loss=loss.item(), acc=current_accuracy.item())
             self.lr_scheduler.step()
 
-    def predict_probabilities(self, x: torch.Tensor, num_sample=100) -> torch.Tensor:
+    def predict_probabilities(self, x: torch.Tensor, num_sample=50) -> torch.Tensor:
         # TODO: MC_Dropout_3. Implement your MC_dropout prediction here
         # You need to sample from your trained model here multiple times
         # in order to implement Monte Carlo integration
@@ -460,8 +478,8 @@ class SGLDTrainer(Framework):
         self.num_epochs = 100
         self.burn_in = 2
         self.sample_interval = 3
-        self.max_size = 10
-        torch.manual_seed(0)
+        self.max_size = 15
+        torch.manual_seed(14504)
         # TODO: SGLD_1.  initialize the SGLD network.
         # You can check the Dummy Trainer above for intution about what to do
         self.network = MNISTNet(784, 10, 0.3, True)
@@ -469,7 +487,7 @@ class SGLDTrainer(Framework):
             dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
             )
         # SGLD optimizer is provided
-        self.optimizer = SGLD(self.network.parameters(),lr = self.learning_rate, weight_decay=6.5e-5, momentum=0.5,
+        self.optimizer = SGLD(self.network.parameters(),lr = self.learning_rate, weight_decay=6.5e-5, momentum=0.5, dampening = 0,
                         nesterov = True)
         self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=3, gamma=0.68)
         # deques support bi-directional addition and deletion
@@ -551,6 +569,8 @@ class SGLDTrainer(Framework):
         return estimated_probability
 
 
+# 1.0 constructing priors from scratch
+# 2.0 constructing BNN from pyro
 class BackpropTrainer(Framework):
     def __init__(self, dataset_train,  *args, **kwargs):
         super().__init__(dataset_train, *args, **kwargs)

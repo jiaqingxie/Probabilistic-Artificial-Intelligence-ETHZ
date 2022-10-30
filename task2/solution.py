@@ -1,4 +1,5 @@
 import os
+from random import sample
 import typing
 
 import numpy as np
@@ -10,15 +11,15 @@ from torch import nn
 from torch.nn import functional as F
 from tqdm import trange
 import tqdm
-from torch.distributions import Poisson
 from collections import deque
-import copy
+from torch.distributions.normal import Normal
+from torch.distributions.independent import Independent
 
 from util import ece, ParameterDistribution, draw_reliability_diagram, draw_confidence_histogram, SGLD
 from enum import Enum
 
 # TODO: Reliability_diagram_1. Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
-EXTENDED_EVALUATION = False
+EXTENDED_EVALUATION = True
 
 class Approach(Enum):
     Dummy_Trainer = 0
@@ -42,13 +43,16 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
     """
 
     # TODO: Combined model_1: Choose if you want to combine with multiple methods or not
-    combined_model = False
+    combined_model = True
 
     if not combined_model:
         
         # TODO General_1: Choose your approach here
-        approach = Approach.MCDropout
+        #approach = Approach.MCDropout
         #approach = Approach.SGLD
+        #approach == Approach.Ensemble
+        #approach == Approach.SelfMade
+        approach = Approach.Backprop
 
         if approach == Approach.Dummy_Trainer:
             trainer = DummyTrainer(dataset_train=dataset_train)
@@ -82,9 +86,9 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
 
         # TODO: Combined model_2: If you want to use combined methods 
         # you can set the trainers you want to use like below
-        trainer1 = DummyTrainer(dataset_train=dataset_train)
-        trainer2 = DummyTrainer(dataset_train=dataset_train)
-        trainer3 = DummyTrainer(dataset_train=dataset_train)
+        trainer1 = DropoutTrainer(dataset_train=dataset_train)
+        trainer2 = BackpropTrainer(dataset_train=dataset_train)
+        trainer3 = EnsembleTrainer(dataset_train=dataset_train)
         trainer_list = [trainer1,trainer2,trainer3]
 
         # Train the combined model
@@ -99,7 +103,7 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
         return trainer_list
 
 
-def calc_calibration_curve(predicted_probabilities: np.ndarray, labels: np.ndarray, num_bins=30)-> dict:
+def calc_calibration_curve(predicted_probabilities: np.ndarray, labels: np.ndarray, num_bins=10)-> dict:
     """
     Calculate ece and understand what is good calibration. This task is part of the 
     extended evaluation and not required for passing. 
@@ -118,12 +122,16 @@ def calc_calibration_curve(predicted_probabilities: np.ndarray, labels: np.ndarr
     calib_accuracy = np.zeros(num_bins,dtype=np.float)
     ratios = np.zeros(num_bins,dtype=np.float)
 
+
     for bin_i, (bin_lower, bin_upper) in enumerate(zip(bin_lowers, bin_uppers)):
         # TODO: Reliability_diagram_2. Calculate calibration confidence, accuracy in every bin
 
-        calib_confidence[bin_i] = None
-        calib_accuracy[bin_i] = None
-        ratios[bin_i] = None
+        in_bin = np.logical_and(confidences > bin_lower, confidences <= bin_upper)
+        prop_in_bin = np.mean(in_bin)
+        if prop_in_bin > 0:
+            calib_confidence[bin_i] = np.mean(confidences[in_bin])
+            calib_accuracy[bin_i] = np.mean(accuracies[in_bin])
+            ratios[bin_i] = prop_in_bin 
     
     return {"calib_confidence": calib_confidence, "calib_accuracy": calib_accuracy, "p": ratios, "bins": bins}
 
@@ -577,16 +585,19 @@ class BackpropTrainer(Framework):
 
         # Hyperparameters and general parameters
         # TODO: Backprop_7 Tune parameters and add more if necessary
-        self.hidden_features=(100,100)
-        self.batch_size = 128
+        self.hidden_features=(128, 84)
+        self.batch_size = 256
         self.num_epochs = 100
-        learning_rate = 1e-3
-
+        learning_rate = 1.05e-3
+        torch.manual_seed(14504)
         self.network = BayesNet(in_features=28 * 28, hidden_features=self.hidden_features, out_features=10)
-        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate)
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate, weight_decay=1e-6)
         self.train_loader = torch.utils.data.DataLoader(
             dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
             )
+        self.criterion = nn.CrossEntropyLoss() 
+        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.94)
+        
 
     def train(self):
 
@@ -597,21 +608,24 @@ class BackpropTrainer(Framework):
             num_batches = len(self.train_loader)
             for batch_idx, (batch_x, batch_y) in enumerate(self.train_loader):
                 # batch_x are of shape (batch_size, 784), batch_y are of shape (batch_size,)
-
                 self.network.zero_grad()
-
+                current_logits, log_prior, log_posterior = self.network(batch_x)
                 # TODO: Backprop_6: Implement Bayes by backprop training here
-                loss = None
+                #loss = self.criterion(F.log_softmax(current_logits, dim=1), batch_y)
+                loss = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
+                loss += (1/num_batches) * (log_posterior - log_prior)
+                loss.backward()
                 self.optimizer.step()
-
                 # Update progress bar with accuracy occasionally
                 if batch_idx % self.print_interval == 0:
                     current_logits, _, _ = self.network(batch_x)
                     current_accuracy = (current_logits.argmax(axis=1) == batch_y).float().mean()
                     progress_bar.set_postfix(loss=loss.item(), acc=current_accuracy.item())
 
+            self.lr_scheduler.step()
+            
 
-    def predict_probabilities(self, x: torch.Tensor, num_mc_samples: int = 10) -> torch.Tensor:
+    def predict_probabilities(self, x: torch.Tensor, num_mc_samples: int = 20) -> torch.Tensor:
         """
         Predict class probabilities for the given features by sampling from this BNN.
 
@@ -620,6 +634,7 @@ class BackpropTrainer(Framework):
         :return: Predicted class probabilities, float tensor of shape (batch_size, 10)
             such that the last dimension sums up to 1 for each row
         """
+        
         probability_samples = torch.stack([F.softmax(self.network(x)[0], dim=1) for _ in range(num_mc_samples)], dim=0)
         estimated_probability = torch.mean(probability_samples, dim=0)
 
@@ -655,7 +670,10 @@ class BayesianLayer(nn.Module):
         #  You can create constants using torch.tensor(...).
         #  Do NOT use torch.Parameter(...) here since the prior should not be optimized!
         #  Example: self.prior = MyPrior(torch.tensor(0.0), torch.tensor(1.0))
-        self.prior = None
+
+        self.prior = UnivariateGaussian(
+            torch.tensor(0.0), torch.tensor(1.0)
+        )
         assert isinstance(self.prior, ParameterDistribution)
         assert not any(True for _ in self.prior.parameters()), 'Prior cannot have parameters'
 
@@ -670,7 +688,14 @@ class BayesianLayer(nn.Module):
         #      torch.nn.Parameter(torch.zeros((out_features, in_features))),
         #      torch.nn.Parameter(torch.ones((out_features, in_features)))
         #  )
-        self.weights_var_posterior = None
+        self.weights_var_posterior =  MultivariateDiagonalGaussian(
+            mu = nn.Parameter(
+                torch.FloatTensor(self.out_features, self.in_features).normal_(mean=0.0, std=0.1)
+                ),
+            rho = nn.Parameter(
+                torch.FloatTensor(self.out_features, self.in_features).normal_(mean=-2.9, std=0.1)
+                )
+        )
 
         assert isinstance(self.weights_var_posterior, ParameterDistribution)
         assert any(True for _ in self.weights_var_posterior.parameters()), 'Weight posterior must have parameters'
@@ -678,7 +703,14 @@ class BayesianLayer(nn.Module):
         if self.use_bias:
             # TODO: Backprop_1. Similarly as you did above for the weights, create the bias variational posterior instance here.
             #  Make sure to follow the same rules as for the weight variational posterior.
-            self.bias_var_posterior = None
+            self.bias_var_posterior = MultivariateDiagonalGaussian(
+            mu = nn.Parameter(
+                torch.FloatTensor(self.out_features).normal_(mean=0.0, std=0.1)
+                ),
+            rho = nn.Parameter(
+                torch.FloatTensor(self.out_features).normal_(mean=-2.9, std=0.1)
+                )
+            )
             assert isinstance(self.bias_var_posterior, ParameterDistribution)
             assert any(True for _ in self.bias_var_posterior.parameters()), 'Bias posterior must have parameters'
         else:
@@ -701,11 +733,18 @@ class BayesianLayer(nn.Module):
         # TODO: Backprop_2. Perform a forward pass as described in this method's docstring.
         #  Make sure to check whether `self.use_bias` is True,
         #  and if yes, include the bias as well.
-        log_prior = torch.tensor(0.0)
-        log_variational_posterior = torch.tensor(0.0)
-        weights = None
-        bias = None
+        lambd= torch.randn(self.out_features, self.in_features)
+        weights = self.weights_var_posterior.mu + F.softplus(self.weights_var_posterior.rho) * lambd
+        log_prior = self.prior.log_likelihood(weights).sum()
+        log_variational_posterior = self.weights_var_posterior.log_likelihood(weights).sum()
 
+        if self.use_bias:
+            lambd = torch.randn(self.out_features)
+            bias = self.bias_var_posterior.mu + F.softplus(self.bias_var_posterior.rho) * lambd
+            log_prior += self.prior.log_likelihood(bias).sum()
+            log_variational_posterior += self.bias_var_posterior.log_likelihood(bias)
+        else:
+            bias = None
         return F.linear(inputs, weights, bias), log_prior, log_variational_posterior
 
 
@@ -749,14 +788,18 @@ class BayesNet(nn.Module):
         # TODO: Backprop_3. Perform a full pass through your BayesNet as described in this method's docstring.
         #  You can look at Dummy Trainer to get an idea how a forward pass might look like.
         #  Don't forget to apply your activation function in between BayesianLayers!
-        log_prior = torch.tensor(0.0)
-        log_variational_posterior = torch.tensor(0.0)
-        output_features = None
-
+        log_prior, log_variational_posterior = 0.0, 0.0
+        output_features = x
+        for i, layer_i in enumerate(self.layers):
+            output_features, log_prior_i, log_variational_posterior_i = layer_i(output_features)
+            log_prior += log_prior_i
+            log_variational_posterior += log_variational_posterior_i
+            if i < len(self.layers) - 1: # last layer doesnt need activation
+                output_features = self.activation(output_features)
         return output_features, log_prior, log_variational_posterior
+        
 
-
-    def predict_probabilities(self, x: torch.Tensor, num_mc_samples: int = 50) -> torch.Tensor:
+    def predict_probabilities(self, x: torch.Tensor, num_mc_samples: int = 15) -> torch.Tensor:
         """
         Predict class probabilities for the given features by sampling from this BNN.
 
@@ -789,15 +832,14 @@ class UnivariateGaussian(ParameterDistribution):
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
         # TODO: Backprop_4. You need to complete the log likelihood function 
         # for the Univariate Gaussian distribution. 
-        constant = -0.5 * torch.log(2 * np.pi) - torch.log(self.sigma)
-        squared = -0.5 * (((values - self.mu)/self.sigma) ** 2)
-        return constant + squared
+        ans = Normal(self.mu, self.sigma).log_prob(values)
+        return ans
 
     def sample(self) -> torch.Tensor:
         # TODO: Backprop_4. You need to complete the sample function 
         # for the Univariate Gaussian distribution. 
-        return torch.randn(()) * self.sigma + self.mu
-
+        ans = Normal(self.mu, self.sigma).sample()
+        return ans
 
 class MultivariateDiagonalGaussian(ParameterDistribution):
     """
@@ -818,17 +860,15 @@ class MultivariateDiagonalGaussian(ParameterDistribution):
         # TODO: Backprop_5. You need to complete the log likelihood function 
         # for the Multivariate DiagonalGaussian Gaussian distribution. 
         sigma = F.softplus(self.rho)
-        constant = - 0.5 * len(values.shape[1]) * torch.log(2 * np.pi)
-        constant = constant - 0.5 * torch.det(sigma)
-        ans = constant - 0.5 * ((values - self.mu).flatten()).T @ torch.linalg.inv(sigma) @ (values - self.mu).flatten()
+        ans = Independent(Normal(self.mu, sigma), 1).log_prob(values)
         return ans
 
     def sample(self) -> torch.Tensor:
         # TODO: Backprop_5. You need to complete the sample function 
         # for the Multivariate DiagonalGaussian Gaussian distribution. 
         sigma = F.softplus(self.rho)
-        return torch.randn(*self.mu.shape) * sigma + self.mu
-
+        ans = Independent(Normal(self.mu, sigma), 1).sample(self.mu.size())
+        return ans
 
 class SelfTrainer(Framework):
     def __init__(self, dataset_train, print_interval=50,*args, **kwargs):

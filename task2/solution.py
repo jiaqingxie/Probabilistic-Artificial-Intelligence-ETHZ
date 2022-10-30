@@ -19,7 +19,7 @@ from util import ece, ParameterDistribution, draw_reliability_diagram, draw_conf
 from enum import Enum
 
 # TODO: Reliability_diagram_1. Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
-EXTENDED_EVALUATION = True
+EXTENDED_EVALUATION = False
 
 class Approach(Enum):
     Dummy_Trainer = 0
@@ -28,7 +28,6 @@ class Approach(Enum):
     Backprop = 3
     SGLD = 4
     SelfMade = 5 
-
 
 def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.curdir, output_dir: str = '/results/'):
     """
@@ -43,7 +42,7 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
     """
 
     # TODO: Combined model_1: Choose if you want to combine with multiple methods or not
-    combined_model = True
+    combined_model = False
 
     if not combined_model:
         
@@ -88,16 +87,21 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
         # you can set the trainers you want to use like below
         trainer1 = DropoutTrainer(dataset_train=dataset_train)
         trainer2 = BackpropTrainer(dataset_train=dataset_train)
-        trainer3 = EnsembleTrainer(dataset_train=dataset_train)
-        trainer_list = [trainer1,trainer2,trainer3]
+        #trainer3 = EnsembleTrainer(dataset_train=dataset_train)
+        trainer_list = [trainer1, trainer2] #, , trainer3
 
         # Train the combined model
         for trainer_i in trainer_list:
             trainer_i.train()
 
+        eval_loader = torch.utils.data.DataLoader(
+            dataset_train, batch_size=64, shuffle=False, drop_last=False
+        )
         # Evaulate each of the combined models
         for trainer_i in trainer_list:
             evaluate(trainer_i, eval_loader, data_dir, output_dir)
+
+
 
     # IMPORTANT: return your combined model here!
         return trainer_list
@@ -186,9 +190,11 @@ def combined_predict(data_loader: torch.utils.data.DataLoader, models_list: list
 
     for batch_x, _ in tqdm.tqdm(data_loader):
         # TODO: Combined model_3. Predict with your combined model
-        current_probabilities = None
-        probability_batches.append(current_probabilities)
-        
+        for model in models_list:
+            current_probabilities = model.predict_probabilities(batch_x).detach().numpy()
+            probability_batches.append(current_probabilities)
+
+
     output = np.concatenate(probability_batches, axis=0)
     assert isinstance(output, np.ndarray)
     assert output.ndim == 2 and output.shape[1] == 10
@@ -585,18 +591,18 @@ class BackpropTrainer(Framework):
 
         # Hyperparameters and general parameters
         # TODO: Backprop_7 Tune parameters and add more if necessary
-        self.hidden_features=(128, 84)
+        self.hidden_features=(100, 100)
         self.batch_size = 256
-        self.num_epochs = 100
-        learning_rate = 1.05e-3
-        torch.manual_seed(14504)
+        self.num_epochs = 200
+        learning_rate = 1.1e-3
+        torch.manual_seed(1234560)
         self.network = BayesNet(in_features=28 * 28, hidden_features=self.hidden_features, out_features=10)
-        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate, weight_decay=1e-6)
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate, weight_decay=1.5e-5)
         self.train_loader = torch.utils.data.DataLoader(
             dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
             )
         self.criterion = nn.CrossEntropyLoss() 
-        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.94)
+        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=8, gamma=0.9)
         
 
     def train(self):
@@ -648,7 +654,7 @@ class BayesianLayer(nn.Module):
     It maintains a prior and variational posterior for the weights (and biases)
     and uses sampling to approximate the gradients via Bayes by backprop.
     """
-    def __init__(self, in_features: int, out_features: int, bias: bool = True):
+    def __init__(self, in_features: int, out_features: int, bias: bool = False):
         """
         Create a BayesianLayer.
 
@@ -672,7 +678,7 @@ class BayesianLayer(nn.Module):
         #  Example: self.prior = MyPrior(torch.tensor(0.0), torch.tensor(1.0))
 
         self.prior = UnivariateGaussian(
-            torch.tensor(0.0), torch.tensor(1.0)
+            torch.tensor(0.0), torch.tensor(1.2)
         )
         assert isinstance(self.prior, ParameterDistribution)
         assert not any(True for _ in self.prior.parameters()), 'Prior cannot have parameters'
@@ -689,11 +695,11 @@ class BayesianLayer(nn.Module):
         #      torch.nn.Parameter(torch.ones((out_features, in_features)))
         #  )
         self.weights_var_posterior =  MultivariateDiagonalGaussian(
-            mu = nn.Parameter(
+                nn.Parameter(
                 torch.FloatTensor(self.out_features, self.in_features).normal_(mean=0.0, std=0.1)
                 ),
-            rho = nn.Parameter(
-                torch.FloatTensor(self.out_features, self.in_features).normal_(mean=-2.9, std=0.1)
+                nn.Parameter(
+                torch.FloatTensor(self.out_features, self.in_features).normal_(mean=-2.91, std=0.1)
                 )
         )
 
@@ -704,11 +710,11 @@ class BayesianLayer(nn.Module):
             # TODO: Backprop_1. Similarly as you did above for the weights, create the bias variational posterior instance here.
             #  Make sure to follow the same rules as for the weight variational posterior.
             self.bias_var_posterior = MultivariateDiagonalGaussian(
-            mu = nn.Parameter(
+                nn.Parameter(
                 torch.FloatTensor(self.out_features).normal_(mean=0.0, std=0.1)
-                ),
-            rho = nn.Parameter(
-                torch.FloatTensor(self.out_features).normal_(mean=-2.9, std=0.1)
+                ), 
+                nn.Parameter(
+                torch.FloatTensor(self.out_features).normal_(mean=-2.91, std=0.1)
                 )
             )
             assert isinstance(self.bias_var_posterior, ParameterDistribution)

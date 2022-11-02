@@ -47,11 +47,11 @@ def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.cur
     if not combined_model:
         
         # TODO General_1: Choose your approach here
-        #approach = Approach.MCDropout
+        approach = Approach.MCDropout
         #approach = Approach.SGLD
         #approach == Approach.Ensemble
         #approach == Approach.SelfMade
-        approach = Approach.Backprop
+        #approach = Approach.Backprop
 
         if approach == Approach.Dummy_Trainer:
             trainer = DummyTrainer(dataset_train=dataset_train)
@@ -305,10 +305,10 @@ class SelfMadeNetwork(nn.Module):
         # TODO General_2: Play around with the network structure.
         # You could change the depth or width of the model
         # I have changed the width from 100 -> 256, 64
-        self.layer1 = nn.Linear(in_features, 256) # 256 for MC-dropout
-        self.layer2 = nn.Linear(256, 128) # 256 for MC-dropout
-        self.layer3 = nn.Linear(128, 84) 
-        self.layer4 = nn.Linear(84, out_features)
+        self.layer1 = nn.Linear(in_features, 512) # 256 for MC-dropout
+        self.layer2 = nn.Linear(512, 256) # 256 for MC-dropout
+        self.layer3 = nn.Linear(256, 128) 
+        self.layer4 = nn.Linear(128, out_features)
         self.dropout_p = dropout_p
         self.dropout_at_eval = dropout_at_eval
 
@@ -345,18 +345,23 @@ class DropoutTrainer(Framework):
         self.learning_rate = 1e-3
         self.num_epochs = 200
         torch.manual_seed(14504) # set seed for reproducibility
+
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print(self.device)
         
         # TODO: MC_Dropout_1. Initialize the MC_Dropout network and optimizer here
         # You can check the Dummy Trainer above for intuition about what to do
-        #self.network = SelfMadeNetwork(in_features=28*28,out_features=10, dropout_p=0.18, dropout_at_eval=True)
-        self.network = MNISTNet(in_features=28*28,out_features=10, dropout_p=0.15, dropout_at_eval=True)
+        #self.network = SelfMadeNetwork(in_features=28*28,out_features=10, dropout_p=0.25, dropout_at_eval=True)
+        self.network = MNISTNet(in_features=28*28,out_features=10, dropout_p=0.15, dropout_at_eval=True).to(self.device)
         self.train_loader = torch.utils.data.DataLoader(
             dataset_train, batch_size=self.batch_size, shuffle=True, drop_last=True
             )
         # As pointed out in the paper, optimizer required a L2 Norm Penalty.
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.learning_rate, weight_decay= 1e-3) 
         self.criterion = nn.CrossEntropyLoss()
-        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=4, gamma=0.9)
+        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.9)
+        #self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, 10)
+
 
     def train(self):
         self.network.train()
@@ -368,14 +373,15 @@ class DropoutTrainer(Framework):
                 self.network.zero_grad()
                 # TODO: MC_Dropout_2. Implement MCDropout training here
                 # You need to calculate the loss based on the literature
-                current_logits = self.network(batch_x)
+                batch_idx
+                current_logits = self.network(batch_x.to(self.device))
                 # loss keep unchanged 
-                loss = self.criterion(F.log_softmax(current_logits, dim=1), batch_y)
+                loss = self.criterion(F.log_softmax(current_logits, dim=1), batch_y.to(self.device))
                 #loss = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
                 # Backpropagate to get the gradients
                 loss.backward()
-
                 self.optimizer.step()
+                
                 
                 # Update progress bar with accuracy occasionally
                 if batch_idx % self.print_interval == 0:
@@ -383,6 +389,7 @@ class DropoutTrainer(Framework):
                     current_accuracy = (current_logits.argmax(axis=1) == batch_y).float().mean()
                     progress_bar.set_postfix(loss=loss.item(), acc=current_accuracy.item())
             self.lr_scheduler.step()
+        
 
     def predict_probabilities(self, x: torch.Tensor, num_sample=50) -> torch.Tensor:
         # TODO: MC_Dropout_3. Implement your MC_dropout prediction here

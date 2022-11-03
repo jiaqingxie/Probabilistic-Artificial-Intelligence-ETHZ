@@ -272,8 +272,8 @@ class MNISTNet(nn.Module):
         # TODO General_2: Play around with the network structure.
         # You could change the depth or width of the model
         # I have changed the width from 100 -> 256, 64
-        self.layer1 = nn.Linear(in_features, 256) # 256 for MC-dropout
-        self.layer2 = nn.Linear(256, 84) # 256 for MC-dropout
+        self.layer1 = nn.Linear(in_features, 240) # 256 for MC-dropout
+        self.layer2 = nn.Linear(240, 84) # 256 for MC-dropout
         self.layer3 = nn.Linear(84, out_features)
         self.dropout_p = dropout_p
         self.dropout_at_eval = dropout_at_eval
@@ -341,13 +341,12 @@ class DropoutTrainer(Framework):
 
         # Hyperparameters and general parameters
         # TODO: MC_Dropout_4. Do experiments and tune hyperparameters
-        self.batch_size = 256
-        self.learning_rate = 1e-3
+        self.batch_size = 128
+        self.learning_rate = 8e-4
         self.num_epochs = 200
         torch.manual_seed(14504) # set seed for reproducibility
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        print(self.device)
         
         # TODO: MC_Dropout_1. Initialize the MC_Dropout network and optimizer here
         # You can check the Dummy Trainer above for intuition about what to do
@@ -373,7 +372,6 @@ class DropoutTrainer(Framework):
                 self.network.zero_grad()
                 # TODO: MC_Dropout_2. Implement MCDropout training here
                 # You need to calculate the loss based on the literature
-                batch_idx
                 current_logits = self.network(batch_x.to(self.device))
                 # loss keep unchanged 
                 loss = self.criterion(F.log_softmax(current_logits, dim=1), batch_y.to(self.device))
@@ -391,7 +389,7 @@ class DropoutTrainer(Framework):
             self.lr_scheduler.step()
         
 
-    def predict_probabilities(self, x: torch.Tensor, num_sample=50) -> torch.Tensor:
+    def predict_probabilities(self, x: torch.Tensor, num_sample=100) -> torch.Tensor:
         # TODO: MC_Dropout_3. Implement your MC_dropout prediction here
         # You need to sample from your trained model here multiple times
         # in order to implement Monte Carlo integration

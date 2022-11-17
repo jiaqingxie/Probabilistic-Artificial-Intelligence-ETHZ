@@ -5,7 +5,8 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, RBF, Matern
 from scipy.stats import norm
 import math
-import GPy
+import warnings 
+warnings.filterwarnings('ignore')
 
 np.random.seed(6)
 domain = np.array([[0, 5]])
@@ -20,19 +21,8 @@ class BO_algo():
         self.v_min = 1.2
         self.sigma_f = 0.15
         self.sigma_v = 0.0001
-        self.variance_f = 0.5
-        self.variance_v = math.sqrt(2)
-        self.len_scale_f = 0.5
-        self.len_scale_v = 0.5
-        self.constant_v = 1.5
-        self.smoothness = 2.5
-        self.fx_GP_kernel = GPy.kern.Matern52(
-                input_dim=domain.shape[0], variance=self.variance_f ,
-                lengthscale=self.len_scale_f)
-        self.vx_GP_kernel = GPy.kern.Matern52(
-                input_dim=domain.shape[0], variance=self.variance_v,
-                lengthscale=self.len_scale_v) + GPy.kern.Bias(
-                input_dim=domain.shape[0], variance=self.constant_v)
+        self.fx_kernel = 0.5 * Matern(length_scale=0.5, nu=2.5)
+        self.vx_kernel = math.sqrt(2) * Matern(length_scale=0.5, nu=2.5) + ConstantKernel(1.5)
 
         self.x = np.array([]).reshape(-1, domain.shape[0])
         self.f = np.array([]).reshape(-1, domain.shape[0])
@@ -87,7 +77,7 @@ class BO_algo():
         We implemented and modified this function from:
         https://ekamperi.github.io/machine%20learning/2021/06/11/acquisition-functions.html
         """
-        mu, sigma = self.fx_GP.predict(x.reshape(-1, domain.shape[0]))
+        mu, sigma = self.fx_GP.predict(x.reshape(-1, domain.shape[0]), return_std=True)
         sigma = sigma.reshape(-1, 1)
         mu_x = self.fx_GP.predict(self.x)
         mu_x_opt = np.max(mu_x)
@@ -98,7 +88,7 @@ class BO_algo():
         return ei
 
     def constraint(self, x):
-        mu, sigma = self.vx_GP.predict(x.reshape(-1, domain.shape[0]))
+        mu, sigma = self.vx_GP.predict(x.reshape(-1, domain.shape[0]), return_std=True)
         if sigma != 0:
             pr = 1 - norm.cdf(self.v_min, loc=mu, scale=sigma)
         else:
@@ -121,7 +111,7 @@ class BO_algo():
         """
 
         # TODO: enter your code here
-        ei = self.EI(x, 0.00)
+        ei = self.EI(x, 0.01)
         constraint = self.constraint(x)
         return float(ei * constraint)
 
@@ -144,22 +134,13 @@ class BO_algo():
         self.v = np.vstack((self.v, v))
 
         if self.n == 0:
-            self.fx_GP = GPy.models.gp_regression.GPRegression(
-                X=self.x, Y=self.f,
-                kernel=self.fx_GP_kernel, noise_var=self.sigma_f**2
-            )
-            self.vx_GP = GPy.models.gp_regression.GPRegression(
-                X=self.x, Y=self.v,
-                kernel=self.vx_GP_kernel, noise_var=self.sigma_v**2
-            )
-
-        
-        self.fx_GP.set_XY(self.x, self.f)
-        self.vx_GP.set_XY(self.x, self.v)
+            self.fx_GP = GaussianProcessRegressor(kernel=self.fx_kernel, alpha=self.sigma_f)
+            self.vx_GP = GaussianProcessRegressor(kernel=self.vx_kernel, alpha=self.sigma_v)
 
 
-        self.fx_GP.optimize()
-        self.vx_GP.optimize()
+        else:
+            self.fx_GP.fit(self.x, self.f)
+            self.vx_GP.fit(self.x, self.v)
 
         self.n+=1
 

@@ -2,13 +2,13 @@
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, RBF, Matern
+from sklearn.gaussian_process.kernels import ConstantKernel, RBF, Matern, WhiteKernel
 from scipy.stats import norm
 import math
 import warnings 
 warnings.filterwarnings('ignore')
 
-np.random.seed(6)
+np.random.seed(14504)
 domain = np.array([[0, 5]])
 
 """ Solution """
@@ -17,12 +17,11 @@ class BO_algo():
         """Initializes the algorithm with a parameter configuration. """
         # TODO: enter your code here
         self.n = 0
+        self.beta = 10
         # prior
         self.v_min = 1.2
-        self.sigma_f = 0.15
-        self.sigma_v = 0.0001
-        self.fx_kernel = 0.5 * Matern(length_scale=0.5, nu=2.5)
-        self.vx_kernel = math.sqrt(2) * Matern(length_scale=0.5, nu=2.5) + ConstantKernel(1.5)
+        self.fx_kernel = 0.5 * Matern(length_scale=0.5, nu=2.5)  + WhiteKernel(0.15**2)
+        self.vx_kernel = math.sqrt(2) * Matern(length_scale=0.5, nu=2.5) + ConstantKernel(1.5) + WhiteKernel(0.0001**2)
 
         self.x = np.array([]).reshape(-1, domain.shape[0])
         self.f = np.array([]).reshape(-1, domain.shape[0])
@@ -38,7 +37,9 @@ class BO_algo():
         """
 
         if self.x.shape == 0:
-           next_x = np.array([[np.random.uniform(0, 5)]])
+            next_x = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * \
+                 np.random.rand(domain.shape[0])
+            #next_x = domain[:, 0] + (domain[:, 1] - domain[:, 0]) / 2
         else:
             next_x = self.optimize_acquisition_function()
         return next_x
@@ -89,10 +90,8 @@ class BO_algo():
 
     def constraint(self, x):
         mu, sigma = self.vx_GP.predict(x.reshape(-1, domain.shape[0]), return_std=True)
-        if sigma != 0:
-            pr = 1 - norm.cdf(self.v_min, loc=mu, scale=sigma)
-        else:
-            pr = 0.92 * (mu - self.v_min) if mu >= self.v_min else 0.08 * (self.v_min - mu)
+        pr = norm.cdf(self.v_min, loc=mu, scale=sigma)
+
         return pr
 
     def acquisition_function(self, x):
@@ -111,9 +110,9 @@ class BO_algo():
         """
 
         # TODO: enter your code here
-        ei = self.EI(x, 0.01)
+        ei = self.EI(x, 0.001)
         constraint = self.constraint(x)
-        return float(ei * constraint)
+        return float(ei - self.beta * constraint)
 
     def add_data_point(self, x, f, v):
         """
@@ -134,8 +133,8 @@ class BO_algo():
         self.v = np.vstack((self.v, v))
 
         if self.n == 0:
-            self.fx_GP = GaussianProcessRegressor(kernel=self.fx_kernel, alpha=self.sigma_f)
-            self.vx_GP = GaussianProcessRegressor(kernel=self.vx_kernel, alpha=self.sigma_v)
+            self.fx_GP = GaussianProcessRegressor(kernel=self.fx_kernel)
+            self.vx_GP = GaussianProcessRegressor(kernel=self.vx_kernel)
 
 
         else:
@@ -226,4 +225,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

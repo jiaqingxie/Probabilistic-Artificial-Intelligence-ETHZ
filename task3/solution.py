@@ -8,7 +8,7 @@ import math
 import warnings 
 warnings.filterwarnings('ignore')
 
-np.random.seed(14504)
+np.random.seed(0)
 domain = np.array([[0, 5]])
 
 """ Solution """
@@ -17,7 +17,7 @@ class BO_algo():
         """Initializes the algorithm with a parameter configuration. """
         # TODO: enter your code here
         self.n = 0
-        self.beta = 10
+        self.beta = 80
         # prior
         self.v_min = 1.2
         self.fx_kernel = 0.5 * Matern(length_scale=0.5, nu=2.5)  + WhiteKernel(0.15**2)
@@ -35,11 +35,9 @@ class BO_algo():
         recommendation: np.ndarray
             1 x domain.shape[0] array containing the next point to evaluate
         """
-
-        if self.x.shape == 0:
+        if len(self.x) == 0:
             next_x = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * \
                  np.random.rand(domain.shape[0])
-            #next_x = domain[:, 0] + (domain[:, 1] - domain[:, 0]) / 2
         else:
             next_x = self.optimize_acquisition_function()
         return next_x
@@ -110,8 +108,9 @@ class BO_algo():
         """
 
         # TODO: enter your code here
-        ei = self.EI(x, 0.001)
+        ei = self.EI(x, 0.0001)
         constraint = self.constraint(x)
+
         return float(ei - self.beta * constraint)
 
     def add_data_point(self, x, f, v):
@@ -133,13 +132,13 @@ class BO_algo():
         self.v = np.vstack((self.v, v))
 
         if self.n == 0:
-            self.fx_GP = GaussianProcessRegressor(kernel=self.fx_kernel)
-            self.vx_GP = GaussianProcessRegressor(kernel=self.vx_kernel)
+            self.fx_GP = GaussianProcessRegressor(kernel=self.fx_kernel, random_state=0)
+            self.vx_GP = GaussianProcessRegressor(kernel=self.vx_kernel,  random_state=0)
 
 
-        else:
-            self.fx_GP.fit(self.x, self.f)
-            self.vx_GP.fit(self.x, self.v)
+        
+        self.fx_GP.fit(self.x, self.f)
+        self.vx_GP.fit(self.x, self.v)
 
         self.n+=1
 
@@ -181,10 +180,10 @@ def v(x):
 def main():
     # Init problem
     agent = BO_algo()
-    n_dim = 1
+    #n_dim = 1
     # Add initial safe point
     x_init = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * np.random.rand(
-            1, n_dim)
+            1)
     obj_val = f(x_init)
     cost_val = v(x_init)
     agent.add_data_point(x_init, obj_val, cost_val)

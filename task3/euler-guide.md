@@ -75,7 +75,7 @@ You need to perform the following steps each time you reconnect to the cluster a
 2. Submit a batch job:
     1. Run
 
-            bsub -o "$(pwd)/logs.txt" -n 4 -R "rusage[mem=2048]" python -u checker_client.py"
+            bsub -o "$(pwd)/logs.txt" -n 4 -R "rusage[mem=2048]" python -u checker_client.py --results_dir "$(pwd)"
 
     2. Do **not** modify any files in the *~/task3/* directory until the batch job has completed. The cluster uses your code at the time of *execution*, not at the time of *submission*!
     3. You can inspect the state of your batch job by running `bbjobs`.

@@ -2,7 +2,7 @@
 Chong Zhang @Tsinghua, Ziheng Chi @HPoly, Jiaqing Xie @Edinburgh. We are all master student at ETH Zurich. This repo includes four projects.
 
 ## 1. Gaussian Process Regression for Air Pollution Prediction
-
+<img></img>
 We have trained several local GPs with clusters to include all of the training points. As part of training local GPs, we used KMeans to fit the data to each cluster (each cluster trains an individual GP model). It is estimated that the final cost would be approximately 15.18.
 <br/><br/>
 

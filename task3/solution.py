@@ -8,7 +8,7 @@ import math
 import warnings 
 warnings.filterwarnings('ignore')
 
-np.random.seed(20)
+np.random.seed(14504)
 domain = np.array([[0, 5]])
 
 """ Solution """
@@ -156,7 +156,7 @@ class BO_algo():
             1 x domain.shape[0] array containing the optimal solution of the problem
         """
         copy_f = self.f
-        copy_f[self.v <= 1.2] = -100
+        copy_f[self.v < 1.2] = -np.inf
         max_idx = np.argmax(copy_f)
         x_opt = self.x[max_idx]
         return x_opt

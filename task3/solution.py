@@ -48,7 +48,7 @@ class BO_algo():
             next_x = 1/4 * domain[:, 0] + 3/4 * domain[:, 1]
         else:
             next_x = self.optimize_acquisition_function()
-        return next_x
+        return np.atleast_2d(next_x)
 
 
     def optimize_acquisition_function(self):

@@ -8,7 +8,7 @@ import math
 import warnings 
 warnings.filterwarnings('ignore')
 
-np.random.seed(2)
+np.random.seed(20)
 domain = np.array([[0, 5]])
 
 """ Solution """
@@ -17,16 +17,21 @@ class BO_algo():
         """Initializes the algorithm with a parameter configuration. """
         # TODO: enter your code here
 
-        self.beta = 100
+        self.beta = 200
         # prior
         self.v_min = 1.2
-        self.fx_kernel = 0.5 * Matern(length_scale=0.5, nu=2.5)  + WhiteKernel(0.15)
-        self.vx_kernel = math.sqrt(2) * Matern(length_scale=0.5, nu=2.5) + ConstantKernel(1.5) + WhiteKernel(0.0001)
+        self.fx_kernel = 0.5 * Matern(length_scale=0.5, nu=2.5) +\
+                         WhiteKernel(0.15)
+        self.vx_kernel = math.sqrt(2) * Matern(length_scale=0.5, nu=2.5)\
+                         + ConstantKernel(1.5) +\
+                         WhiteKernel(0.0001)
         self.fx_GP = GaussianProcessRegressor(kernel=self.fx_kernel, random_state=0)
         self.vx_GP = GaussianProcessRegressor(kernel=self.vx_kernel,  random_state=0)
         self.x = np.array([]).reshape(-1, domain.shape[0])
         self.f = np.array([]).reshape(-1, domain.shape[0])
         self.v = np.array([]).reshape(-1, domain.shape[0])
+
+        self.first_bad = False
 
     def next_recommendation(self):
         """
@@ -37,7 +42,10 @@ class BO_algo():
             1 x domain.shape[0] array containing the next point to evaluate
         """
         if len(self.x) == 0:
-            next_x = 2/3 * domain[:, 0] + 1/3 * domain[:, 1]
+            next_x = 3/4 * domain[:, 0] + 1/4 * domain[:, 1]
+        elif len(self.x) == 1 and self.first_bad:
+            print('first sample is bad')
+            next_x = 1/4 * domain[:, 0] + 3/4 * domain[:, 1]
         else:
             next_x = self.optimize_acquisition_function()
         return next_x
@@ -132,6 +140,10 @@ class BO_algo():
         self.fx_GP.fit(self.x, self.f)
         self.vx_GP.fit(self.x, self.v)
 
+        if len(self.x) == 1 and (self.v[0]<self.v_min*1.05 or self.f[0]<0.1):
+            self.first_bad = True
+        else:
+            self.first_bad = False
 
 
     def get_solution(self):

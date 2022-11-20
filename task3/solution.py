@@ -1,4 +1,3 @@
-
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -16,22 +15,15 @@ class BO_algo():
     def __init__(self):
         """Initializes the algorithm with a parameter configuration. """
         # TODO: enter your code here
-
-        self.beta = 200
+        self.n = 0
+        self.beta = 100
         # prior
         self.v_min = 1.2
-        self.fx_kernel = 0.5 * Matern(length_scale=0.5, nu=2.5) +\
-                         WhiteKernel(0.15)
-        self.vx_kernel = math.sqrt(2) * Matern(length_scale=0.5, nu=2.5)\
-                         + ConstantKernel(1.5) +\
-                         WhiteKernel(0.0001)
-        self.fx_GP = GaussianProcessRegressor(kernel=self.fx_kernel, random_state=0)
-        self.vx_GP = GaussianProcessRegressor(kernel=self.vx_kernel,  random_state=0)
+        self.fx_kernel = 0.5 * Matern(length_scale=0.5, nu=2.5) + WhiteKernel(0.15**2)
+        self.vx_kernel = math.sqrt(2) * Matern(length_scale=0.5, nu=2.5) + ConstantKernel(1.5) + WhiteKernel(0.0001**2)
         self.x = np.array([]).reshape(-1, domain.shape[0])
         self.f = np.array([]).reshape(-1, domain.shape[0])
         self.v = np.array([]).reshape(-1, domain.shape[0])
-
-        self.first_bad = False
 
     def next_recommendation(self):
         """
@@ -41,20 +33,17 @@ class BO_algo():
         recommendation: np.ndarray
             1 x domain.shape[0] array containing the next point to evaluate
         """
-        if len(self.x) == 0:
-            next_x = 3/4 * domain[:, 0] + 1/4 * domain[:, 1]
-        elif len(self.x) == 1 and self.first_bad:
-            print('first sample is bad')
-            next_x = 1/4 * domain[:, 0] + 3/4 * domain[:, 1]
+
+        if self.x.shape == 0:
+            next_x = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * np.random.rand(domain.shape[0])
         else:
             next_x = self.optimize_acquisition_function()
-        return np.atleast_2d(next_x)
+        return next_x
 
 
     def optimize_acquisition_function(self):
         """
         Optimizes the acquisition function.
-
         Returns
         -------
         x_opt: np.ndarray
@@ -69,10 +58,8 @@ class BO_algo():
 
         # Restarts the optimization 20 times and pick best solution
         for _ in range(20):
-            x0 = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * \
-                 np.random.rand(domain.shape[0])
-            result = fmin_l_bfgs_b(objective, x0=x0, bounds=domain,
-                                   approx_grad=True)
+            x0 = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * np.random.rand(domain.shape[0])
+            result = fmin_l_bfgs_b(objective, x0=x0, bounds=domain, approx_grad=True)
             x_values.append(np.clip(result[0], *domain[0]))
             f_values.append(-result[1])
 
@@ -84,29 +71,38 @@ class BO_algo():
         We implemented and modified this function from:
         https://ekamperi.github.io/machine%20learning/2021/06/11/acquisition-functions.html
         """
-        mu, sigma = self.fx_GP.predict(x.reshape(-1, domain.shape[0]), return_std=True)
-        mu_x_opt = np.max(self.f)
-        res = mu - mu_x_opt - hyper_inject
+        mu_x, sigma_x = self.fx_GP.predict(x.reshape(-1, domain.shape[0]), return_std=True)
+        sigma_x = sigma_x.reshape(-1, 1)
+        f_x_all = self.fx_GP.predict(self.x)
+        f_x_star = np.max(f_x_all)
+        res = mu_x - f_x_star - hyper_inject
         with np.errstate(divide='warn'):
-            ei = res * norm.cdf(res/sigma) + sigma * norm.pdf(res/sigma)
-
-        return ei
+            eif = res * norm.cdf(res/sigma_x) + sigma_x * norm.pdf(res/sigma_x)
+            eif[sigma_x == 0.0] = 0.0
+        # print("eif: ", eif)
+        return eif
 
     def constraint(self, x):
-        mu, sigma = self.vx_GP.predict(x.reshape(-1, domain.shape[0]), return_std=True)
-        pr = norm.cdf(self.v_min, loc=mu, scale=sigma)
-
-        return pr
+        mu_x, sigma_x = self.vx_GP.predict(x.reshape(-1, domain.shape[0]), return_std=True)
+        sigma_x = sigma_x.reshape(-1, 1)
+        v_x_star = self.v_min
+        res = v_x_star - mu_x
+        with np.errstate(divide='warn'):
+            eiv = res * norm.cdf(res/sigma_x) + sigma_x * norm.pdf(res/sigma_x)
+            eiv[sigma_x == 0.0] = 0.0
+        # print("eiv: ", eiv)
+        return eiv
+        # mu, sigma = self.vx_GP.predict(x.reshape(-1, domain.shape[0]), return_std=True)
+        # pr = norm.cdf(self.v_min, loc=mu, scale=sigma)
+        # return pr
 
     def acquisition_function(self, x):
         """
         Compute the acquisition function.
-
         Parameters
         ----------
         x: np.ndarray
             x in domain of f
-
         Returns
         ------
         af_value: float
@@ -116,13 +112,11 @@ class BO_algo():
         # TODO: enter your code here
         ei = self.EI(x, 0.001)
         constraint = self.constraint(x)
-
         return float(ei - self.beta * constraint)
 
     def add_data_point(self, x, f, v):
         """
         Add data points to the model.
-
         Parameters
         ----------
         x: np.ndarray
@@ -137,26 +131,25 @@ class BO_algo():
         self.f = np.vstack((self.f, f))
         self.v = np.vstack((self.v, v))
 
-        self.fx_GP.fit(self.x, self.f)
-        self.vx_GP.fit(self.x, self.v)
-
-        if len(self.x) == 1 and (self.v[0]<self.v_min*1.05 or self.f[0]<0.1):
-            self.first_bad = True
+        if self.n == 0:
+            self.fx_GP = GaussianProcessRegressor(kernel=self.fx_kernel)
+            self.vx_GP = GaussianProcessRegressor(kernel=self.vx_kernel)
         else:
-            self.first_bad = False
+            self.fx_GP.fit(self.x, self.f)
+            self.vx_GP.fit(self.x, self.v)
 
+        self.n+=1
 
     def get_solution(self):
         """
         Return x_opt that is believed to be the maximizer of f.
-
         Returns
         -------
         solution: np.ndarray
             1 x domain.shape[0] array containing the optimal solution of the problem
         """
         copy_f = self.f
-        copy_f[self.v < 1.2] = -np.inf
+        copy_f[self.v < 1.2] = -100
         max_idx = np.argmax(copy_f)
         x_opt = self.x[max_idx]
         return x_opt
@@ -178,21 +171,19 @@ def f(x):
 
 def v(x):
     """Dummy speed"""
-    return 2
+    return 2.0
 
 
 def main():
     # Init problem
     agent = BO_algo()
-    #n_dim = 1
+    n_dim = 1
     # Add initial safe point
-    x_init = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * np.random.rand(
-            1)
+    x_init = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * np.random.rand(1, n_dim)
     obj_val = f(x_init)
     cost_val = v(x_init)
     agent.add_data_point(x_init, obj_val, cost_val)
 
-    
     # Loop until budget is exhausted
     for j in range(20):
         # Get next recommendation

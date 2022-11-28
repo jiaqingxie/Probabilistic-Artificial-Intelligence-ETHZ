@@ -11,6 +11,7 @@ from gym.spaces import Box, Discrete
 import torch
 from torch.optim import Adam
 import torch.nn as nn
+from torch.distributions.categorical import Categorical
 
 
 def discount_cumsum(x, discount):
@@ -53,9 +54,11 @@ def mlp(sizes, activation, output_activation=nn.Identity):
 
     # TODO: Implement this function.
     # Hint: Use nn.Sequential to stack multiple layers of the network.
-
-    raise NotImplementedError
-
+    model = []
+    for i in range(len(sizes)-1):
+        model += [nn.Linear(sizes[i], sizes[i+1]) ]
+        model += [activation() if i != len(sizes)-2 else output_activation()]
+    return nn.Sequential(*model)
 
 class Actor(nn.Module):
     """A class for the policy network."""
@@ -86,7 +89,8 @@ class Actor(nn.Module):
         # Hint: The logits_net returns for a given observation the log 
         # probabilities. You should use them to obtain a Categorical 
         # distribution.
-        raise NotImplementedError
+        logp = self.logits_net(obs)
+        return Categorical(logits=logp)
 
     def _log_prob_from_distribution(self, pi, act):
         """
@@ -109,8 +113,8 @@ class Actor(nn.Module):
         """
 
         # TODO: Implement this function.
-
-        raise NotImplementedError
+        logp = pi.log_prob(act)
+        return logp
 
     def forward(self, obs, act=None):
         """
@@ -134,8 +138,8 @@ class Actor(nn.Module):
 
         # TODO: Implement this function.
         # Hint: If act is None, log_prob is also None.
-
-        raise NotImplementedError
+        logp_act = None if act is None else self._log_prob_from_distribution(self._distribution(obs), act) 
+        return self._distribution(obs), logp_act
 
 
 class Critic(nn.Module):
@@ -220,7 +224,11 @@ class VPGBuffer:
         assert self.ptr < self.max_size
 
         # TODO: Store new data in the respective buffers.
-
+        self.obs_buf[self.ptr] = obs
+        self.act_buf[self.ptr] = act
+        self.rew_buf[self.ptr] = rew
+        self.val_buf[self.ptr] = val
+        self.logp_buf[self.ptr] = logp
 
         # Update pointer after data is stored.
         self.ptr += 1
@@ -255,17 +263,20 @@ class VPGBuffer:
         # TODO: Implement TD residuals calculation.
         # Hint: use the discount_cumsum function 
         # self.tdres_buf[path_slice] = ...
-
+        deltas = rews[:-1] + vals[1:] - vals[:-1]
+        self.tdres_buf[path_slice] = discount_cumsum(deltas, self.gamma*self.lam)
 
         # TODO: Implement discounted rewards-to-go calculation. 
         # Hint: use the discount_cumsum function 
         # self.ret_buf[path_slice] = ...
 
+        self.ret_buf[path_slice] = discount_cumsum(rews[:-1], self.gamma*self.lam)
+
 
         # Update the path_start_idx
         self.path_start_idx = self.ptr
 
-        pass
+        #pass
 
 
     def get(self):
@@ -314,12 +325,17 @@ class Agent:
         logp: np.ndarray of (1, )
             The log-probability of the action under the policy output distribution.
         """
-        
+
         # TODO: Implement this function.
         # Hint: This function is only called during inference. You should use
         # `torch.no_grad` to ensure that it does not interfer with the gradient computation.
+        with torch.no_grad():
+            cat_action = self.actor._distribution(state)
+            action = cat_action.sample()
+            action_logp = self.actor._log_prob_from_distribution(cat_action, action)
+            value_action = self.critic(state) 
 
-        return 0, 0, 0
+        return action, value_action, action_logp
 
     def act(self, state):
         return self.step(state)[0]
@@ -345,7 +361,11 @@ class Agent:
         # TODO: Implement this function.
         # Currently, this just returns a random action.
         
-        return np.random.choice([0, 1, 2, 3])
+        return self.step(torch.Tensor(obs))
+        # obs_tensor = torch.from_numpy(obs)
+        # dtype = next(iter(self.actor.parameters())).dtype
+        # return self.step(obs_tensor.to(dtype))[0].cpu().numpy()
+
 
 
 def train(env, seed=0):
@@ -438,9 +458,16 @@ def train(env, seed=0):
         # done for you.
 
         data = buf.get()
+        obs = data['obs']
+        act = data['act']
+        tdres = data['tdres']
+        ret = data['ret']
 
         # Do 1 policy gradient update
         actor_optimizer.zero_grad() #reset the gradient in the actor optimizer
+        act_loss = -tdres @ agent.actor(obs, act)[1]
+        act_loss.backward()
+        actor_optimizer.step()
 
         #Hint: you need to compute a 'loss' such that its derivative with respect to the actor
         # parameters is the policy gradient. Then call loss.backwards() and actor_optimizer.step()
@@ -448,9 +475,10 @@ def train(env, seed=0):
         # We suggest to do 100 iterations of value function updates
         for _ in range(100):
             critic_optimizer.zero_grad()
+            critic_loss = torch.sum((agent.critic.v_net(obs) - ret) ** 2)
+            critic_loss.backward()
             #compute a loss for the value function, call loss.backwards() and then
-            #critic_optimizer.step()
-
+            critic_optimizer.step()
 
     return agent
 

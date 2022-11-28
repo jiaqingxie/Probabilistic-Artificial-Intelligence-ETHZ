@@ -11,6 +11,8 @@ from gym.spaces import Box, Discrete
 import torch
 from torch.optim import Adam
 import torch.nn as nn
+from torch.nn import MSELoss
+
 from torch.distributions.categorical import Categorical
 
 
@@ -29,6 +31,7 @@ def combined_shape(length, shape=None):
         return (length,)
     return (length, shape) if np.isscalar(shape) else (length, *shape)
 
+# correct
 def mlp(sizes, activation, output_activation=nn.Identity):
     """
     The basic multilayer perceptron architecture used.
@@ -56,8 +59,9 @@ def mlp(sizes, activation, output_activation=nn.Identity):
     # Hint: Use nn.Sequential to stack multiple layers of the network.
     model = []
     for i in range(len(sizes)-1):
-        model += [nn.Linear(sizes[i], sizes[i+1]) ]
+        model += [nn.Linear(sizes[i], sizes[i+1])]
         model += [activation() if i != len(sizes)-2 else output_activation()]
+
     return nn.Sequential(*model)
 
 class Actor(nn.Module):
@@ -68,7 +72,7 @@ class Actor(nn.Module):
         self.logits_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
 
-
+    # correct
     def _distribution(self, obs):
         """
         Takes the observation and outputs a distribution over actions.
@@ -92,6 +96,7 @@ class Actor(nn.Module):
         logp = self.logits_net(obs)
         return Categorical(logits=logp)
 
+    # correct
     def _log_prob_from_distribution(self, pi, act):
         """
         Take a distribution and action, then gives the log-probability of the action
@@ -116,6 +121,7 @@ class Actor(nn.Module):
         logp = pi.log_prob(act)
         return logp
 
+    # correct
     def forward(self, obs, act=None):
         """
         Produce action distributions for given observations, and then compute the
@@ -270,7 +276,7 @@ class VPGBuffer:
         # Hint: use the discount_cumsum function 
         # self.ret_buf[path_slice] = ...
 
-        self.ret_buf[path_slice] = discount_cumsum(rews[:-1], self.gamma*self.lam)
+        self.ret_buf[path_slice] = discount_cumsum(rews, self.gamma)[:-1]
 
 
         # Update the path_start_idx
@@ -287,7 +293,6 @@ class VPGBuffer:
         assert self.ptr == self.max_size
         self.ptr, self.path_start_idx = 0, 0
 
-        self.tdres_buf = self.tdres_buf
         tdres_mean = np.mean(self.tdres_buf)
         tdres_std = np.std(self.tdres_buf)
         self.tdres_buf = (self.tdres_buf - tdres_mean) / tdres_std
@@ -361,7 +366,7 @@ class Agent:
         # TODO: Implement this function.
         # Currently, this just returns a random action.
         
-        return self.step(torch.Tensor(obs))
+        return self.act(torch.Tensor(obs))
         # obs_tensor = torch.from_numpy(obs)
         # dtype = next(iter(self.actor.parameters())).dtype
         # return self.step(obs_tensor.to(dtype))[0].cpu().numpy()
@@ -416,7 +421,7 @@ def train(env, seed=0):
 
     # Initialize the environment
     state, ep_ret, ep_len = agent.env.reset(), 0, 0
-
+    
     # Main training loop: collect experience in env and update / log each epoch
     for epoch in range(epochs):
         ep_returns = []
@@ -435,6 +440,7 @@ def train(env, seed=0):
 
             timeout = ep_len == max_ep_len
             epoch_ended = (t == steps_per_epoch - 1)
+            
 
             if terminal or timeout or epoch_ended:
                 # if trajectory didn't reach terminal state, bootstrap value target
@@ -446,10 +452,10 @@ def train(env, seed=0):
                     ep_returns.append(ep_ret)  # only store return when episode ended
                 buf.end_traj(v)
                 state, ep_ret, ep_len = agent.env.reset(), 0, 0
-
+        
         mean_return = np.mean(ep_returns) if len(ep_returns) > 0 else np.nan
         print(f"Epoch: {epoch+1}/{epochs}, mean return {mean_return}")
-
+        
         # This is the end of an epoch, so here is where you likely want to update
         # the actor and / or critic function.
 
@@ -465,7 +471,7 @@ def train(env, seed=0):
 
         # Do 1 policy gradient update
         actor_optimizer.zero_grad() #reset the gradient in the actor optimizer
-        act_loss = -tdres @ agent.actor(obs, act)[1]
+        act_loss = -tdres @ agent.actor.forward(obs, act)[1]
         act_loss.backward()
         actor_optimizer.step()
 
@@ -475,7 +481,9 @@ def train(env, seed=0):
         # We suggest to do 100 iterations of value function updates
         for _ in range(100):
             critic_optimizer.zero_grad()
-            critic_loss = torch.sum((agent.critic.v_net(obs) - ret) ** 2)
+            loss_f = MSELoss()
+            v = agent.critic.v_net.forward(obs).squeeze()
+            critic_loss = loss_f(v, ret)
             critic_loss.backward()
             #compute a loss for the value function, call loss.backwards() and then
             critic_optimizer.step()
@@ -494,8 +502,10 @@ def main():
     """
     from lunar_lander import LunarLander
     from gym.wrappers.monitoring.video_recorder import VideoRecorder
-
+     
     env = LunarLander()
+
+
     env.seed(0)
     
     agent = train(env)
@@ -507,6 +517,7 @@ def main():
     print("Evaluating agent...")
 
     for i in range(n_eval):
+
         print(f"Testing policy: episode {i+1}/{n_eval}")
         state = env.reset()
         cumulative_return = 0

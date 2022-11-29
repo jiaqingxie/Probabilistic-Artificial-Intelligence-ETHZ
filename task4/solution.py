@@ -11,7 +11,7 @@ from gym.spaces import Box, Discrete
 import torch
 from torch.optim import Adam
 import torch.nn as nn
-from torch.nn import MSELoss
+
 
 from torch.distributions.categorical import Categorical
 
@@ -31,7 +31,6 @@ def combined_shape(length, shape=None):
         return (length,)
     return (length, shape) if np.isscalar(shape) else (length, *shape)
 
-# correct
 def mlp(sizes, activation, output_activation=nn.Identity):
     """
     The basic multilayer perceptron architecture used.
@@ -61,7 +60,9 @@ def mlp(sizes, activation, output_activation=nn.Identity):
     for i in range(len(sizes)-1):
         model += [nn.Linear(sizes[i], sizes[i+1])]
         model += [activation() if i != len(sizes)-2 else output_activation()]
-
+        if i == len(sizes)-2:
+            break
+        model += [nn.Dropout(p=0.16)] # add dropout layers
     return nn.Sequential(*model)
 
 class Actor(nn.Module):
@@ -71,8 +72,6 @@ class Actor(nn.Module):
         super().__init__()
         self.logits_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
-
-    # correct
     def _distribution(self, obs):
         """
         Takes the observation and outputs a distribution over actions.
@@ -88,15 +87,12 @@ class Actor(nn.Module):
             n action distributions for each state/obs.
 
         """
-
         # TODO: Implement this function.
         # Hint: The logits_net returns for a given observation the log 
         # probabilities. You should use them to obtain a Categorical 
         # distribution.
-        logp = self.logits_net(obs)
-        return Categorical(logits=logp)
+        return Categorical(logits=self.logits_net(obs))
 
-    # correct
     def _log_prob_from_distribution(self, pi, act):
         """
         Take a distribution and action, then gives the log-probability of the action
@@ -118,10 +114,8 @@ class Actor(nn.Module):
         """
 
         # TODO: Implement this function.
-        logp = pi.log_prob(act)
-        return logp
+        return pi.log_prob(act)
 
-    # correct
     def forward(self, obs, act=None):
         """
         Produce action distributions for given observations, and then compute the
@@ -278,7 +272,6 @@ class VPGBuffer:
 
         self.ret_buf[path_slice] = discount_cumsum(rews, self.gamma)[:-1]
 
-
         # Update the path_start_idx
         self.path_start_idx = self.ptr
 
@@ -339,7 +332,6 @@ class Agent:
             action = cat_action.sample()
             action_logp = self.actor._log_prob_from_distribution(cat_action, action)
             value_action = self.critic(state) 
-
         return action, value_action, action_logp
 
     def act(self, state):
@@ -365,12 +357,7 @@ class Agent:
 
         # TODO: Implement this function.
         # Currently, this just returns a random action.
-        
         return self.act(torch.Tensor(obs))
-        # obs_tensor = torch.from_numpy(obs)
-        # dtype = next(iter(self.actor.parameters())).dtype
-        # return self.step(obs_tensor.to(dtype))[0].cpu().numpy()
-
 
 
 def train(env, seed=0):
@@ -399,7 +386,7 @@ def train(env, seed=0):
     # Number of training steps per epoch
     steps_per_epoch = 3000
     # Number of epochs to train for
-    epochs = 50
+    epochs = 55
     # The longest an episode can go on before cutting it off
     max_ep_len = 300
     # Discount factor for weighting future rewards
@@ -462,32 +449,27 @@ def train(env, seed=0):
 
         # TODO: Implement the policy and value function updates. Hint: some of the torch code is
         # done for you.
-
         data = buf.get()
         obs = data['obs']
         act = data['act']
-        tdres = data['tdres']
+        tdres = data['tdres'].squeeze()
         ret = data['ret']
 
         # Do 1 policy gradient update
         actor_optimizer.zero_grad() #reset the gradient in the actor optimizer
-        act_loss = -tdres @ agent.actor.forward(obs, act)[1]
+        act_loss = - tdres @ agent.actor.forward(obs, act)[1]
         act_loss.backward()
         actor_optimizer.step()
 
         #Hint: you need to compute a 'loss' such that its derivative with respect to the actor
         # parameters is the policy gradient. Then call loss.backwards() and actor_optimizer.step()
-
         # We suggest to do 100 iterations of value function updates
         for _ in range(100):
             critic_optimizer.zero_grad()
-            loss_f = MSELoss()
             v = agent.critic.v_net.forward(obs).squeeze()
-            critic_loss = loss_f(v, ret)
+            critic_loss = torch.nn.MSELoss()(v, ret)
             critic_loss.backward()
-            #compute a loss for the value function, call loss.backwards() and then
             critic_optimizer.step()
-
     return agent
 
 

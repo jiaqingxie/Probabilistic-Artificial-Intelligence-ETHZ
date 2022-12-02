@@ -62,7 +62,7 @@ def mlp(sizes, activation, output_activation=nn.Identity):
         model += [activation() if i != len(sizes)-2 else output_activation()]
         if i == len(sizes)-2:
             break
-        model += [nn.Dropout(p=0.16)] # add dropout layers
+        model += [nn.Dropout(p=0.03)] # add dropout layers
     return nn.Sequential(*model)
 
 class Actor(nn.Module):
@@ -386,9 +386,9 @@ def train(env, seed=0):
     # Number of training steps per epoch
     steps_per_epoch = 3000
     # Number of epochs to train for
-    epochs = 55
+    epochs = 65
     # The longest an episode can go on before cutting it off
-    max_ep_len = 300
+    max_ep_len = 298
     # Discount factor for weighting future rewards
     gamma = 0.99
     lam = 0.97

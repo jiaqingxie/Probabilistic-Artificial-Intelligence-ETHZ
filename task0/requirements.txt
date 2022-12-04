@@ -1,0 +1,4 @@
+numpy==1.21.*
+scipy==1.7.*
+pyarmor==6.7.4
+cryptography==3.0
